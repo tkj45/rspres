@@ -1,104 +1,276 @@
-import { MongoClient } from 'mongodb'
-import { v4 as uuidv4 } from 'uuid'
-import { NextResponse } from 'next/server'
+import { NextResponse } from 'next/server';
+import { query } from '@/lib/db';
 
-// MongoDB connection
-let client
-let db
-
-async function connectToMongo() {
-  if (!client) {
-    client = new MongoClient(process.env.MONGO_URL)
-    await client.connect()
-    db = client.db(process.env.DB_NAME)
-  }
-  return db
-}
-
-// Helper function to handle CORS
-function handleCORS(response) {
-  response.headers.set('Access-Control-Allow-Origin', process.env.CORS_ORIGINS || '*')
-  response.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
-  response.headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization')
-  response.headers.set('Access-Control-Allow-Credentials', 'true')
-  return response
-}
-
-// OPTIONS handler for CORS
-export async function OPTIONS() {
-  return handleCORS(new NextResponse(null, { status: 200 }))
-}
-
-// Route handler function
-async function handleRoute(request, { params }) {
-  const { path = [] } = params
-  const route = `/${path.join('/')}`
-  const method = request.method
-
+// GET handler
+export async function GET(request) {
   try {
-    const db = await connectToMongo()
+    const { pathname, searchParams } = new URL(request.url);
+    const path = pathname.replace('/api/', '');
 
-    // Root endpoint - GET /api/root (since /api/ is not accessible with catch-all)
-    if (route === '/root' && method === 'GET') {
-      return handleCORS(NextResponse.json({ message: "Hello World" }))
-    }
-    // Root endpoint - GET /api/root (since /api/ is not accessible with catch-all)
-    if (route === '/' && method === 'GET') {
-      return handleCORS(NextResponse.json({ message: "Hello World" }))
-    }
-
-    // Status endpoints - POST /api/status
-    if (route === '/status' && method === 'POST') {
-      const body = await request.json()
+    // Today's attendance with employee details
+    if (path === 'attendance/today') {
+      const today = new Date().toISOString().split('T')[0];
       
-      if (!body.client_name) {
-        return handleCORS(NextResponse.json(
-          { error: "client_name is required" }, 
+      const sql = `
+        SELECT 
+          r.pin,
+          r.scan_date,
+          r.scan_date_in,
+          r.scan_date_out,
+          p.pegawai_nama,
+          p.pegawai_nip,
+          p.pembagian1_id,
+          p.pembagian2_id,
+          p.tgl_lahir,
+          p.gender,
+          p.photo_path
+        FROM rkp_att_log r
+        LEFT JOIN pegawai p ON r.pin = p.pegawai_pin
+        WHERE r.scan_date = ?
+        ORDER BY r.scan_date_in ASC
+      `;
+      
+      const results = await query(sql, [today]);
+      return NextResponse.json({ success: true, data: results });
+    }
+
+    // Real-time attendance logs
+    if (path === 'attendance/live') {
+      const limit = searchParams.get('limit') || '50';
+      
+      const sql = `
+        SELECT 
+          a.pin,
+          a.scan_date,
+          a.verifymode,
+          a.inoutmode,
+          p.pegawai_nama,
+          p.pegawai_nip
+        FROM att_log a
+        LEFT JOIN pegawai p ON a.pin = p.pegawai_pin
+        ORDER BY a.scan_date DESC
+        LIMIT ?
+      `;
+      
+      const results = await query(sql, [parseInt(limit)]);
+      return NextResponse.json({ success: true, data: results });
+    }
+
+    // Statistics by category
+    if (path === 'attendance/stats') {
+      const today = new Date().toISOString().split('T')[0];
+      
+      // Total employees
+      const totalSql = 'SELECT COUNT(*) as total FROM pegawai WHERE pegawai_status = 0';
+      const totalResult = await query(totalSql);
+      
+      // Present today
+      const presentSql = `
+        SELECT COUNT(DISTINCT r.pin) as present
+        FROM rkp_att_log r
+        WHERE r.scan_date = ?
+      `;
+      const presentResult = await query(presentSql, [today]);
+      
+      // By pembagian1
+      const pembagian1Sql = `
+        SELECT 
+          p.pembagian1_id,
+          COUNT(*) as total,
+          SUM(CASE WHEN r.pin IS NOT NULL THEN 1 ELSE 0 END) as present
+        FROM pegawai p
+        LEFT JOIN rkp_att_log r ON p.pegawai_pin = r.pin AND r.scan_date = ?
+        WHERE p.pegawai_status = 0
+        GROUP BY p.pembagian1_id
+      `;
+      const pembagian1Result = await query(pembagian1Sql, [today]);
+      
+      // By pembagian2
+      const pembagian2Sql = `
+        SELECT 
+          p.pembagian2_id,
+          COUNT(*) as total,
+          SUM(CASE WHEN r.pin IS NOT NULL THEN 1 ELSE 0 END) as present
+        FROM pegawai p
+        LEFT JOIN rkp_att_log r ON p.pegawai_pin = r.pin AND r.scan_date = ?
+        WHERE p.pegawai_status = 0
+        GROUP BY p.pembagian2_id
+      `;
+      const pembagian2Result = await query(pembagian2Sql, [today]);
+      
+      return NextResponse.json({
+        success: true,
+        data: {
+          total: totalResult[0]?.total || 0,
+          present: presentResult[0]?.present || 0,
+          absent: (totalResult[0]?.total || 0) - (presentResult[0]?.present || 0),
+          byPembagian1: pembagian1Result,
+          byPembagian2: pembagian2Result
+        }
+      });
+    }
+
+    // All employees
+    if (path === 'employees') {
+      const sql = `
+        SELECT 
+          pegawai_id,
+          pegawai_pin,
+          pegawai_nip,
+          pegawai_nama,
+          pembagian1_id,
+          pembagian2_id,
+          tgl_lahir,
+          gender,
+          tgl_mulai_kerja,
+          pegawai_status
+        FROM pegawai
+        WHERE pegawai_status = 0
+        ORDER BY pegawai_nama ASC
+      `;
+      
+      const results = await query(sql);
+      return NextResponse.json({ success: true, data: results });
+    }
+
+    // Personal report
+    if (path === 'reports/personal') {
+      const pin = searchParams.get('pin');
+      const startDate = searchParams.get('startDate');
+      const endDate = searchParams.get('endDate');
+      
+      if (!pin || !startDate || !endDate) {
+        return NextResponse.json(
+          { success: false, error: 'Missing required parameters' },
           { status: 400 }
-        ))
+        );
       }
-
-      const statusObj = {
-        id: uuidv4(),
-        client_name: body.client_name,
-        timestamp: new Date()
-      }
-
-      await db.collection('status_checks').insertOne(statusObj)
-      return handleCORS(NextResponse.json(statusObj))
-    }
-
-    // Status endpoints - GET /api/status
-    if (route === '/status' && method === 'GET') {
-      const statusChecks = await db.collection('status_checks')
-        .find({})
-        .limit(1000)
-        .toArray()
-
-      // Remove MongoDB's _id field from response
-      const cleanedStatusChecks = statusChecks.map(({ _id, ...rest }) => rest)
       
-      return handleCORS(NextResponse.json(cleanedStatusChecks))
+      const sql = `
+        SELECT 
+          r.pin,
+          r.scan_date,
+          r.scan_date_in,
+          r.scan_date_out,
+          p.pegawai_nama,
+          p.pegawai_nip,
+          p.pembagian1_id,
+          p.pembagian2_id
+        FROM rkp_att_log r
+        LEFT JOIN pegawai p ON r.pin = p.pegawai_pin
+        WHERE r.pin = ? AND r.scan_date BETWEEN ? AND ?
+        ORDER BY r.scan_date DESC
+      `;
+      
+      const results = await query(sql, [pin, startDate, endDate]);
+      return NextResponse.json({ success: true, data: results });
     }
 
-    // Route not found
-    return handleCORS(NextResponse.json(
-      { error: `Route ${route} not found` }, 
-      { status: 404 }
-    ))
+    // Unit report
+    if (path === 'reports/unit') {
+      const categoryType = searchParams.get('type') || 'pembagian1';
+      const categoryId = searchParams.get('id');
+      const startDate = searchParams.get('startDate');
+      const endDate = searchParams.get('endDate');
+      
+      if (!categoryId || !startDate || !endDate) {
+        return NextResponse.json(
+          { success: false, error: 'Missing required parameters' },
+          { status: 400 }
+        );
+      }
+      
+      const column = categoryType === 'pembagian1' ? 'pembagian1_id' : 'pembagian2_id';
+      
+      const sql = `
+        SELECT 
+          p.pegawai_pin,
+          p.pegawai_nama,
+          p.pegawai_nip,
+          COUNT(DISTINCT r.scan_date) as days_present,
+          GROUP_CONCAT(DISTINCT r.scan_date ORDER BY r.scan_date) as dates
+        FROM pegawai p
+        LEFT JOIN rkp_att_log r ON p.pegawai_pin = r.pin 
+          AND r.scan_date BETWEEN ? AND ?
+        WHERE p.${column} = ? AND p.pegawai_status = 0
+        GROUP BY p.pegawai_pin, p.pegawai_nama, p.pegawai_nip
+        ORDER BY p.pegawai_nama ASC
+      `;
+      
+      const results = await query(sql, [startDate, endDate, categoryId]);
+      return NextResponse.json({ success: true, data: results });
+    }
 
+    // Categories list
+    if (path === 'categories/pembagian1') {
+      const sql = 'SELECT DISTINCT pembagian1_id FROM pegawai WHERE pembagian1_id IS NOT NULL ORDER BY pembagian1_id';
+      const results = await query(sql);
+      return NextResponse.json({ success: true, data: results });
+    }
+
+    if (path === 'categories/pembagian2') {
+      const sql = 'SELECT DISTINCT pembagian2_id FROM pegawai WHERE pembagian2_id IS NOT NULL ORDER BY pembagian2_id';
+      const results = await query(sql);
+      return NextResponse.json({ success: true, data: results });
+    }
+
+    // Test connection
+    if (path === 'test') {
+      const results = await query('SELECT NOW() as current_time');
+      return NextResponse.json({ 
+        success: true, 
+        message: 'Database connected successfully',
+        data: results 
+      });
+    }
+
+    return NextResponse.json(
+      { success: false, error: 'Endpoint not found' },
+      { status: 404 }
+    );
   } catch (error) {
-    console.error('API Error:', error)
-    return handleCORS(NextResponse.json(
-      { error: "Internal server error" }, 
+    console.error('API Error:', error);
+    return NextResponse.json(
+      { success: false, error: error.message },
       { status: 500 }
-    ))
+    );
   }
 }
 
-// Export all HTTP methods
-export const GET = handleRoute
-export const POST = handleRoute
-export const PUT = handleRoute
-export const DELETE = handleRoute
-export const PATCH = handleRoute
+// POST handler for future use (authentication, etc.)
+export async function POST(request) {
+  try {
+    const { pathname } = new URL(request.url);
+    const path = pathname.replace('/api/', '');
+    const body = await request.json();
+
+    // Simple authentication (optional)
+    if (path === 'auth/login') {
+      const { username, password } = body;
+      
+      // Simple check - you can enhance this
+      if (username === 'admin' && password === 'admin123') {
+        return NextResponse.json({
+          success: true,
+          user: { username: 'admin', role: 'admin' }
+        });
+      }
+      
+      return NextResponse.json(
+        { success: false, error: 'Invalid credentials' },
+        { status: 401 }
+      );
+    }
+
+    return NextResponse.json(
+      { success: false, error: 'Endpoint not found' },
+      { status: 404 }
+    );
+  } catch (error) {
+    console.error('API Error:', error);
+    return NextResponse.json(
+      { success: false, error: error.message },
+      { status: 500 }
+    );
+  }
+}
