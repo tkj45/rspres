@@ -216,7 +216,7 @@ export async function GET(request) {
 
     // Test connection
     if (path === 'test') {
-      const results = await query('SELECT NOW() as current_time');
+      const results = await query('SELECT NOW() as currentTime');
       return NextResponse.json({ 
         success: true, 
         message: 'Database connected successfully',
