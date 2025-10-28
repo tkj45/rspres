@@ -135,14 +135,14 @@ export default function AttendanceDashboard() {
 
   // Prepare chart data
   const pembagian1ChartData = stats?.byPembagian1?.map(item => ({
-    name: `Unit ${item.pembagian1_id}`,
+    name: item.pembagian1_nama || `Unit ${item.pembagian1_id}`,
     Hadir: item.present,
     Tidak_Hadir: item.total - item.present,
     Total: item.total
   })) || [];
 
   const pembagian2ChartData = stats?.byPembagian2?.map(item => ({
-    name: `Dept ${item.pembagian2_id}`,
+    name: item.pembagian2_nama || `Dept ${item.pembagian2_id}`,
     Hadir: item.present,
     Tidak_Hadir: item.total - item.present
   })) || [];
@@ -321,8 +321,8 @@ export default function AttendanceDashboard() {
                           <p className="font-semibold text-gray-900">{att.pegawai_nama}</p>
                           <p className="text-sm text-gray-600">NIP: {att.pegawai_nip}</p>
                           <div className="flex gap-2 mt-1">
-                            <Badge variant="outline">Unit: {att.pembagian1_id}</Badge>
-                            <Badge variant="outline">Dept: {att.pembagian2_id}</Badge>
+                            <Badge variant="outline">Unit: {att.pembagian1_nama || att.pembagian1_id}</Badge>
+                            <Badge variant="outline">Dept: {att.pembagian2_nama || att.pembagian2_id}</Badge>
                           </div>
                         </div>
                         <div className="text-right">
@@ -353,12 +353,12 @@ export default function AttendanceDashboard() {
                       <div key={idx} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border">
                         <div className="flex-1">
                           <p className="font-medium text-gray-900">{log.pegawai_nama || 'Unknown'}</p>
-                          <p className="text-xs text-gray-500">PIN: {log.pin}</p>
+                          <p className="text-xs text-gray-500">Unit: {log.pembagian2_nama}</p>
                         </div>
                         <div className="text-right">
                           <p className="text-sm font-medium">{new Date(log.scan_date).toLocaleString('id-ID')}</p>
-                          <Badge variant={log.inoutmode === 2306 ? 'default' : 'secondary'} className="text-xs">
-                            {log.inoutmode === 2306 ? 'Check In' : 'Scan'}
+                          <Badge variant={log.inoutmode === 2305 ? 'success' : 'default'} className="text-xs">
+                            {log.inoutmode === 2305 ? 'Check In' : 'Check Out'}
                           </Badge>
                         </div>
                       </div>
@@ -433,12 +433,14 @@ export default function AttendanceDashboard() {
                         </SelectTrigger>
                         <SelectContent>
                           {categories.map((cat, idx) => (
-                            <SelectItem 
-                              key={idx} 
+                          <SelectItem
+                              key={idx}
                               value={String(cat[categoryType === 'pembagian1' ? 'pembagian1_id' : 'pembagian2_id'])}
-                            >
-                              {categoryType === 'pembagian1' ? 'Unit' : 'Department'} {cat[categoryType === 'pembagian1' ? 'pembagian1_id' : 'pembagian2_id']}
-                            </SelectItem>
+                          >
+                            {categoryType === 'pembagian1'
+                                ? cat.pembagian1_nama || `Unit ${cat.pembagian1_id}`
+                                : cat.pembagian2_nama || `Department ${cat.pembagian2_id}`}
+                          </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
@@ -450,17 +452,17 @@ export default function AttendanceDashboard() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>Start Date</Label>
-                    <Input 
-                      type="date" 
-                      value={startDate} 
+                    <Input
+                      type="date"
+                      value={startDate}
                       onChange={(e) => setStartDate(e.target.value)}
                     />
                   </div>
                   <div className="space-y-2">
                     <Label>End Date</Label>
-                    <Input 
-                      type="date" 
-                      value={endDate} 
+                    <Input
+                      type="date"
+                      value={endDate}
                       onChange={(e) => setEndDate(e.target.value)}
                     />
                   </div>
